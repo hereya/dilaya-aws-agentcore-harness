@@ -33,7 +33,10 @@ const doc = (Statement: Statement[]) => ({ Version: "2012-10-17", Statement });
 
 const logGroupArn = (i: PolicyInput) =>
   `arn:aws:logs:${i.region}:${i.account}:log-group:${RUNTIME_LOG_GROUP_PREFIX}*`;
-const harnessArn = (i: PolicyInput) => `arn:aws:bedrock-agentcore:${i.region}:${i.account}:harness/*`;
+const agentcoreArn = (i: PolicyInput, rest: string) => `arn:aws:bedrock-agentcore:${i.region}:${i.account}:${rest}`;
+const harnessArn = (i: PolicyInput) => agentcoreArn(i, "harness/*");
+const runtimeArn = (i: PolicyInput) => agentcoreArn(i, "runtime/*");
+const WORKLOAD_DIRECTORY = "workload-identity-directory/default";
 
 /** Trust policy of the execution role: AgentCore of THIS account and region only. */
 export function executionTrustPolicy(i: PolicyInput) {
@@ -90,15 +93,64 @@ export function executionPolicy(i: PolicyInput) {
 }
 
 /** Connector side, control plane: one harness per agent — created at set-agent,
- *  deleted at delete-agent — and the retention of the log group it brings. */
+ *  deleted at delete-agent — and the retention of the log group it brings.
+ *
+ *  A harness is NOT one resource: AgentCore builds its runtime, the runtime's
+ *  endpoint and its workload identity WITH THE CALLER'S OWN credentials, so the
+ *  caller needs those actions too. None of it is documented: each grant below is a
+ *  refusal read off a real CreateHarness / DeleteHarness under this exact document
+ *  (trial stack, 21/09/2026 — the connector's scripts/harness-iam-probe.mts). The
+ *  harness hands its tags down to what it creates, so the tag fence holds there too. */
 export function controlPolicy(i: PolicyInput, executionRoleArn: string) {
   const tagged = { StringEquals: { [`aws:ResourceTag/${HARNESS_TAG_KEY}`]: HARNESS_TAG_VALUE } };
+  const requestTagged = { StringEquals: { [`aws:RequestTag/${HARNESS_TAG_KEY}`]: HARNESS_TAG_VALUE } };
+  const identities = `${WORKLOAD_DIRECTORY}/workload-identity/`;
   return doc([
     {
       Effect: "Allow",
       Action: ["bedrock-agentcore:CreateHarness", "bedrock-agentcore:TagResource"],
       Resource: "*",
-      Condition: { StringEquals: { [`aws:RequestTag/${HARNESS_TAG_KEY}`]: HARNESS_TAG_VALUE } },
+      Condition: requestTagged,
+    },
+    {
+      Effect: "Allow",
+      Action: ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:CreateWorkloadIdentity"],
+      // CreateWorkloadIdentity is authorized on the directory AND on the identity.
+      Resource: [runtimeArn(i), agentcoreArn(i, WORKLOAD_DIRECTORY), agentcoreArn(i, `${identities}*`)],
+      Condition: requestTagged,
+    },
+    {
+      Effect: "Allow",
+      Action: ["bedrock-agentcore:CreateAgentRuntimeEndpoint", "bedrock-agentcore:DeleteAgentRuntimeEndpoint"],
+      Resource: runtimeArn(i),
+      Condition: tagged,
+    },
+    {
+      // Fenced by NAME, not by tag: DeleteHarness keeps reading the runtime until it
+      // is GONE, and a runtime that no longer exists has no tag — under a tag
+      // condition that last read is refused and the harness ends DELETE_FAILED
+      // (measured). A harness's runtime is "harness_<harness name>-…".
+      Effect: "Allow",
+      Action: "bedrock-agentcore:GetAgentRuntime",
+      Resource: agentcoreArn(i, "runtime/harness_dilaya_*"),
+    },
+    {
+      // AgentCore authorizes this one against the literal "runtime/*" BEFORE it
+      // names a runtime: no resource, so no tag to read, and a plain StringEquals
+      // refuses every deletion (measured). IfExists lets that first check through
+      // and still refuses a runtime tagged otherwise. Weaker than the rest of the
+      // fence — an UNTAGGED runtime passes — and the only form that works.
+      Effect: "Allow",
+      Action: "bedrock-agentcore:DeleteAgentRuntime",
+      Resource: runtimeArn(i),
+      Condition: { StringEqualsIfExists: { [`aws:ResourceTag/${HARNESS_TAG_KEY}`]: HARNESS_TAG_VALUE } },
+    },
+    {
+      // No tag reaches this call: fenced by NAME — a harness's identity is
+      // "harness_<harness name>-…" and the connector names every harness "dilaya_…".
+      Effect: "Allow",
+      Action: "bedrock-agentcore:DeleteWorkloadIdentity",
+      Resource: [agentcoreArn(i, WORKLOAD_DIRECTORY), agentcoreArn(i, `${identities}harness_dilaya_*`)],
     },
     {
       Effect: "Allow",
@@ -125,7 +177,9 @@ export function invokePolicy(i: PolicyInput) {
   return doc([
     {
       Effect: "Allow",
-      Action: "bedrock-agentcore:InvokeHarness",
+      // InvokeHarness ALONE is refused: AgentCore also checks InvokeAgentRuntime —
+      // on the HARNESS arn, not the runtime's (measured, same trial).
+      Action: ["bedrock-agentcore:InvokeHarness", "bedrock-agentcore:InvokeAgentRuntime"],
       Resource: [harnessArn(i), `${harnessArn(i)}/harness-endpoint/*`],
       Condition: { StringEquals: { [`aws:ResourceTag/${HARNESS_TAG_KEY}`]: HARNESS_TAG_VALUE } },
     },
