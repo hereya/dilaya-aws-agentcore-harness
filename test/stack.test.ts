@@ -30,9 +30,40 @@ test("every harness grant is pinned on the Dilaya tag", () => {
   for (const s of [...statements(controlPolicy(INPUT, ROLE)), ...statements(invokePolicy(INPUT))]) {
     const acts = [s.Action].flat().filter((a) => a.startsWith("bedrock-agentcore:"));
     if (acts.length === 0 || s.Effect !== "Allow") continue;
+    // The TWO grants no tag can hold: fenced by the NAME a Dilaya harness gives instead.
+    if (acts.join() === "bedrock-agentcore:DeleteWorkloadIdentity") {
+      const named = [s.Resource].flat().filter((r) => String(r).includes("/workload-identity/"));
+      assert.deepEqual(named.map((r) => String(r).split("/workload-identity/")[1]), ["harness_dilaya_*"]);
+      continue;
+    }
+    if (acts.join() === "bedrock-agentcore:GetAgentRuntime") {
+      assert.match(String(s.Resource), /:runtime\/harness_dilaya_\*$/);
+      continue;
+    }
     const cond = JSON.stringify(s.Condition ?? {});
     assert.match(cond, /aws:(Request|Resource)Tag\/dilaya:cloud-agent/, `${acts.join(",")} is not tag-pinned`);
   }
+});
+
+test("a harness is several resources: the grants a REAL create / run / delete asked for", () => {
+  // Each name is a refusal read off a live call under this document (21/09/2026).
+  // Removing one is an outage of set-agent, a run, or delete-agent — not a tidy-up.
+  const control = actionsOf(controlPolicy(INPUT, ROLE));
+  for (const a of [
+    "CreateAgentRuntime",
+    "CreateAgentRuntimeEndpoint",
+    "CreateWorkloadIdentity",
+    "GetAgentRuntime",
+    "DeleteAgentRuntimeEndpoint",
+    "DeleteAgentRuntime",
+    "DeleteWorkloadIdentity",
+  ]) {
+    assert.ok(control.includes(`bedrock-agentcore:${a}`), `control document lost ${a}`);
+  }
+  assert.ok(actionsOf(invokePolicy(INPUT)).includes("bedrock-agentcore:InvokeAgentRuntime"));
+  // DeleteAgentRuntime is first authorized with no resource to read a tag from.
+  const del = statements(controlPolicy(INPUT, ROLE)).find((s) => s.Action === "bedrock-agentcore:DeleteAgentRuntime");
+  assert.deepEqual(Object.keys(del?.Condition ?? {}), ["StringEqualsIfExists"]);
 });
 
 test("PassRole names the execution role alone, to AgentCore alone", () => {

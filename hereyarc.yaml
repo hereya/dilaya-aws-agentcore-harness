@@ -1,5 +1,5 @@
 name: dilaya/aws-agentcore-harness
-version: 0.1.0
+version: 0.1.1
 description: "What Dilaya cloud agents need from the AWS account: the execution role shared by every Bedrock AgentCore harness, and the IAM grants that let the connector create, run and delete the harnesses carrying the Dilaya tag. Holds no harness itself — the connector creates one per agent."
 visibility: private
 iac: cdk

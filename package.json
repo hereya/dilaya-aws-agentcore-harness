@@ -1,6 +1,6 @@
 {
   "name": "dilaya-aws-agentcore-harness",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Hereya package dilaya/aws-agentcore-harness: the shared execution role + IAM grants for Dilaya cloud agents on Bedrock AgentCore Harness",
   "type": "module",

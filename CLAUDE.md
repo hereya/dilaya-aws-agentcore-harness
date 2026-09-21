@@ -17,16 +17,50 @@ holds:
   agent token, like any other client;
 - two IAM documents handed to the connector's Lambda role through `iamPolicy*` outputs (the deploy
   package attaches any output with that prefix):
-  - `iamPolicyAgentcoreControl` — `CreateHarness` / `Get` / `Update` / `DeleteHarness`,
-    `iam:PassRole` on the execution role to AgentCore alone, and `logs:CreateLogGroup` +
-    `PutRetentionPolicy` on `/aws/bedrock-agentcore/runtimes/*`;
-  - `iamPolicyAgentcoreInvoke` — `InvokeHarness`, plus an explicit **Deny** on
-    `InvokeAgentRuntimeCommand` (a shell in the runtime).
+  - `iamPolicyAgentcoreControl` — `CreateHarness` / `Get` / `Update` / `DeleteHarness`, **the
+    actions a harness spends on what it is made of** (below), `iam:PassRole` on the execution role
+    to AgentCore alone, and `logs:CreateLogGroup` + `PutRetentionPolicy` on
+    `/aws/bedrock-agentcore/runtimes/*`;
+  - `iamPolicyAgentcoreInvoke` — `InvokeHarness` **and `InvokeAgentRuntime`**, plus an explicit
+    **Deny** on `InvokeAgentRuntimeCommand` (a shell in the runtime).
 
-**Every grant is pinned on the tag `dilaya:cloud-agent=1`** — the request tag for `CreateHarness`
-(no resource exists yet), the resource tag for everything else. A harness created by hand in the
-same account is out of the connector's reach. The connector MUST pass that tag at creation
-(output `agentcoreHarnessTag`).
+**The fence is the tag `dilaya:cloud-agent=1`** — the request tag where a resource is being created,
+the resource tag elsewhere. A harness created by hand in the same account is out of the connector's
+reach. The connector MUST pass that tag at creation (output `agentcoreHarnessTag`); the harness hands
+it down to the runtime and the identity it creates. Three grants cannot be held by a tag, and say so
+in `policies.ts`: `GetAgentRuntime` and `DeleteWorkloadIdentity` are fenced by NAME
+(`harness_dilaya_*` — the connector names every harness `dilaya_…`), and `DeleteAgentRuntime`
+carries `StringEqualsIfExists` (an UNTAGGED runtime passes — the weak point, and the only form
+AgentCore accepts).
+
+## A harness is several resources (trial stack, 21/09/2026)
+
+AgentCore builds a harness's runtime, the runtime's endpoint and its workload identity **with the
+caller's own credentials**. None of it is documented, and 0.1.0 — whose action names had all been
+checked against the service reference — could not create a single harness. Read off real refusals,
+one at a time, under these exact documents:
+
+| Call | Also needs | Authorized on |
+| --- | --- | --- |
+| `CreateHarness` | `CreateAgentRuntime` | literal `runtime/*`, request tag |
+| | `CreateAgentRuntimeEndpoint` | literal `runtime/*`, resource tag |
+| | `CreateWorkloadIdentity` | the directory AND `…/workload-identity/*`, request tag |
+| | `GetAgentRuntime` | the runtime's own ARN |
+| `InvokeHarness` | `InvokeAgentRuntime` | the **harness** ARN (not the runtime's) |
+| `DeleteHarness` | `DeleteAgentRuntimeEndpoint` | the runtime's ARN, resource tag |
+| | `DeleteAgentRuntime` | literal `runtime/*` first — no resource, so no tag |
+| | `DeleteWorkloadIdentity` | the directory (+ the identity) |
+| | `GetAgentRuntime` **after the runtime is gone** | its ARN — no tag left to read |
+
+The last line is the subtle one: under a tag condition the final read is refused and the harness
+ends `DELETE_FAILED` with its runtime already deleted. A missing grant on the create path shows as
+`CREATE_FAILED` + `failureReason` on `GetHarness`, never as an error of `CreateHarness` itself
+(which answers `CREATING`). Measured with the fixed documents: READY in ~13 s, first invoke ~38 s
+(cold runtime), delete ~13 s. The probe is the connector's `scripts/harness-iam-probe.mts` — re-run
+it against a throwaway stack of this package before touching these documents.
+
+Not covered: `DeleteHarness` leaves the runtime's **log group** behind (retention empties it, the
+group stays). The connector has no `logs:DeleteLogGroup` here.
 
 ## Outputs (consumer env contract)
 
@@ -59,10 +93,9 @@ CI (`ci.yml`) runs typecheck + tests + the 220-line guard on PRs. **Publish** = 
 `HEREYA_TOKEN`'s selected list). Publishing never deploys: bump the connector's `hereya.yaml` pin
 and cut a connector release.
 
-⚠️ `cdk synth` green is not the API contract: IAM accepts an action name that does not exist. The
-action names were checked against the AWS service reference
-(`servicereference.us-east-1.amazonaws.com/v1/bedrock-agentcore/…`); whether `CreateHarness` needs
-further dependent actions is only provable by a real call under this exact policy.
+⚠️ `cdk synth` green is not the API contract: IAM accepts an action name that does not exist, and
+a correct name says nothing of the DEPENDENT actions a call spends — see the table above, found only
+by real calls under these exact documents.
 
 ## Conventions
 
