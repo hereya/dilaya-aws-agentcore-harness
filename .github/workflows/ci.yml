@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+      - "!main"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # Le seuil des 220 lignes, comme dans les autres dépôts Dilaya : l'arbre
+      # ENTIER, pas seulement les fichiers d'une PR.
+      - name: Aucun fichier .ts/.tsx au-dessus de 220 lignes
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            lines=$(wc -l < "$f" | tr -d " ")
+            if [ "$lines" -gt 220 ]; then
+              echo "::error file=$f,line=221::$f fait $lines lignes, la limite est 220."
+              fail=1
+            fi
+          done < <(git ls-files '*.ts' '*.tsx')
+          exit $fail

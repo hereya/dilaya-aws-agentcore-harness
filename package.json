@@ -1,0 +1,20 @@
+{
+  "name": "dilaya-aws-agentcore-harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hereya package dilaya/aws-agentcore-harness: the shared execution role + IAM grants for Dilaya cloud agents on Bedrock AgentCore Harness",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test 'test/**/*.test.ts'",
+    "synth": "cdk synth --quiet"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "aws-cdk": "^2.1129.0",
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.4.2",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.0"
+  }
+}

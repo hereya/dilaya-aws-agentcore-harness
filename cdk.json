@@ -1,0 +1,7 @@
+{
+  "app": "npx tsx bin/dilaya-aws-agentcore-harness.ts",
+  "context": {
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:checkSecretUsage": true
+  }
+}

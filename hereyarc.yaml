@@ -1,0 +1,19 @@
+name: dilaya/aws-agentcore-harness
+version: 0.1.0
+description: "What Dilaya cloud agents need from the AWS account: the execution role shared by every Bedrock AgentCore harness, and the IAM grants that let the connector create, run and delete the harnesses carrying the Dilaya tag. Holds no harness itself — the connector creates one per agent."
+visibility: private
+iac: cdk
+infra: aws
+parameters:
+  modelIds:
+    description: "Comma-separated BARE foundation-model ids a harness may call (no inference-profile prefix), e.g. 'anthropic.claude-haiku-4-5-20251001-v1:0'. Each one must have its Marketplace agreement in place on the account before first use (an admin invokes it once in the Bedrock playground)."
+    mandatory: false
+    default: "anthropic.claude-haiku-4-5-20251001-v1:0"
+  inferenceProfilePrefix:
+    description: "Cross-region inference profile prefix prepended to every model id ('eu' keeps inference inside the EU)."
+    mandatory: false
+    default: "eu"
+  logRetentionDays:
+    description: "Retention the connector sets on each harness runtime's log group (AgentCore creates it with none). Short on purpose: prompts and tool payloads travel through these logs. One of 1, 3, 5, 7, 14, 30, 60, 90."
+    mandatory: false
+    default: "7"
